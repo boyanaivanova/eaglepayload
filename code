@@ -1,0 +1,479 @@
+#include <Adafruit_GPS.h>
+
+#include <Wire.h>
+
+#include <Adafruit_AMG88xx.h>
+
+#include "Adafruit_AS726x.h"
+
+#include <Adafruit_Sensor.h>
+
+#include <Adafruit_FXOS8700.h>
+
+#include <Adafruit_VC0706.h>
+
+#include <SPI.h>
+
+#include <SD.h>
+
+#include <SoftwareSerial.h>         
+
+Adafruit_AS726x ams;
+
+Adafruit_AMG88xx amg;
+
+uint16_t sensorValues[AS726x_NUM_CHANNELS];//light thing
+
+Adafruit_FXOS8700 accelmag = Adafruit_FXOS8700(0x8700B); // magnitometer
+
+#define chipSelect 53  //Kamera 
+
+// On Mega: camera TX connected to pin 69 (A15), camera RX to pin 3:
+
+SoftwareSerial cameraconnection = SoftwareSerial(69, 3);
+
+Adafruit_VC0706 cam = Adafruit_VC0706(&cameraconnection);
+
+
+File Mag; //magnetometer
+
+
+float pixels[AMG88xx_PIXEL_ARRAY_SIZE];//thermo camera
+
+
+SoftwareSerial gnss(26,28);//Gps
+
+#define PMTK_SET_NMEA_UPDATE_1HZ  "$PMTK220,1000*1F"
+
+#define PMTK_SET_NMEA_OUTPUT_ALLDATA "$PMTK314,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0*28"
+
+
+void setup() {
+
+  Serial.begin(9600);
+
+    pinMode(53, OUTPUT);
+
+
+    bool status;
+
+    pinMode(LED_BUILTIN, OUTPUT);
+
+if(!accelmag.begin(ACCEL_RANGE_4G))
+
+  {
+
+    Serial.println("Ooops, no Magnetomer  ");
+
+    while(1);
+
+  }
+
+  else{
+
+    Serial.print("I found a magnetometer");
+
+  }
+
+  if(!ams.begin()){
+
+    Serial.println("could not connect to optical sensor ");
+
+    while(1);
+
+  }
+
+  else {
+
+    Serial.println("Optical founda");
+
+  }
+
+    status = amg.begin();
+
+    if (!status) {
+
+        Serial.println("Could not find a thermo camera ");
+
+        while (1);
+
+    }
+
+    else {
+
+    Serial.println("Thermo found");
+
+   }
+
+    
+
+    if (!SD.begin(chipSelect)) {
+
+    Serial.println("Card failed, or not present");
+
+    }
+
+    else {
+
+    Serial.println("Card found:");
+
+      }
+
+  
+
+   if (cam.begin()) {
+
+    Serial.println("Camera Found:");
+
+  } else {
+
+    Serial.println("No camera found ");
+
+    return;
+
+  }
+
+  
+
+}
+
+int Thermo(float arr[]){
+
+   float z;
+
+   float topa=0; // thermo
+
+   float sum=0;
+
+   float average;
+
+   int c=0;
+
+   float otnoshenie;
+
+   
+
+    amg.readPixels(pixels);
+
+
+    for(int i=1; i<=AMG88xx_PIXEL_ARRAY_SIZE; i++){
+
+      if( c==1 || c==8 ){
+
+        if (pixels[i-1]*1.03>topa){
+
+          topa=pixels[i-1]*1.03;
+
+          z=i;
+
+      }
+
+      sum+=pixels[i-1]*1.03;
+
+      }
+
+      else if(c>1 && c<8) {
+
+        if( i%8 == 0 || i%8 == 1 ){
+
+          if(pixels[i-1]*1.03>topa){
+
+            topa=pixels[i-1]*1.03;
+
+            z=i; 
+
+            sum+=pixels[i-1]*1.03;
+
+            }
+
+        } 
+
+        else  {
+
+          if(pixels[i-1]>topa){
+
+          topa=pixels[i-1];
+
+          z=i;
+
+          sum+=pixels[i-1];
+
+          }
+
+        }
+
+    }
+
+     if(i%8==0){
+
+         c+=1;
+
+    }
+
+  }
+
+    average=sum/AMG88xx_PIXEL_ARRAY_SIZE;
+
+    otnoshenie=topa/average;
+
+    Serial.println("Maximuma e ");
+
+    Serial.print(topa);
+
+    Serial.println("Otnoshenieto e ");
+
+    Serial.print(otnoshenie);
+
+    arr[0]=otnoshenie;
+
+    arr[1]=z;
+
+    return(arr);
+
+}
+
+float Optical(float otnoshenie){
+
+  float Optnoshenie;
+
+  float v,b,y,o,g,r;
+
+  if(otnoshenie<1.10){
+
+    Optnoshenie=0;
+
+  }
+
+  else if(otnoshenie>=1.10&&otnoshenie<=1.20){
+
+  ams.startMeasurement(); 
+
+  bool rdy = false;
+
+  while(!rdy){
+
+    delay(5);
+
+    rdy = ams.dataReady();
+
+  }
+
+  ams.readRawValues(sensorValues);  
+
+  Serial.println();
+
+  v=sensorValues[AS726x_VIOLET];
+
+  b=sensorValues[AS726x_BLUE];
+
+  y=sensorValues[AS726x_YELLOW];
+
+  o=sensorValues[AS726x_ORANGE];
+
+  r=sensorValues[AS726x_RED];
+
+  g=sensorValues[AS726x_GREEN];
+
+  Optnoshenie=(y+o+r)/(y+o+r+g+b+v);
+
+  return(Optnoshenie);
+
+  }
+
+}
+
+void magnetometer(){
+
+  int arrmag[3];
+
+  sensors_event_t mevent;
+
+  Mag = SD.open("Mag.txt", FILE_WRITE);
+
+  accelmag.getEvent(&mevent);
+
+  arrmag[0]=mevent.magnetic.x;
+
+  arrmag[1]=mevent.magnetic.y;
+
+  arrmag[2]=mevent.magnetic.z;
+
+ 
+
+   if (Mag) {
+
+    Mag.print("X axis: ");
+
+    Mag.print(arrmag[0]);
+
+    Mag.println("Y axis: ");
+
+    Mag.print(arrmag[1]);
+
+    Mag.println("Z axis: ");
+
+    Mag.print(arrmag[2]);
+
+    
+
+    Mag.close();
+
+  } else {
+
+    Serial.println("Error opening Mag.txt");
+
+  }
+
+}
+
+void GNSS(){
+
+  
+
+}
+
+void snapshot(int red){
+
+  uint16_t jpglen;
+
+    cam.setImageSize(VC0706_640x480);        
+
+   Serial.println("Snap in 3 secs...");
+
+  delay(3000);
+
+
+  if (! cam.takePicture()) 
+
+    Serial.println("Failed to snap!");
+
+  else 
+
+    Serial.println("Picture taken!");
+
+    char filename[13];
+
+  strcpy(filename, "IMAGE000.JPG");
+
+  for (int i = 0; i < 1000; i++) {
+
+    filename[5] = '0' + i/100;
+
+    filename[6] = '0' + ((i%100)/10); 
+
+    filename[7] = '0' + i%10;
+
+    if (! SD.exists(filename)) {
+
+      break;
+
+    }
+
+  }
+
+  File imgFile = SD.open(filename, FILE_WRITE);
+
+  if(red<25){
+
+   jpglen = cam.frameLength()/2;
+
+  }
+
+  else{
+
+   jpglen = cam.frameLength();
+
+  }
+
+   while (jpglen > 0) {
+
+    uint8_t *buffer;
+
+    uint8_t bytesToRead = min(32, jpglen); 
+
+    buffer = cam.readPicture(bytesToRead);
+
+    imgFile.write(buffer, bytesToRead);
+
+   jpglen -= bytesToRead;
+
+   }
+
+  imgFile.close();
+
+  Serial.println("done!");
+
+    
+
+}
+
+
+void loop() {
+
+  float otnoshenie ;
+
+  float Jpega;
+
+  float kon[2];
+
+  int red;
+
+  Thermo(kon);
+
+  magnetometer();
+
+  GNSS();
+
+  otnoshenie=kon[0];
+
+  red=kon[1];
+
+  Serial.print("The place of the maximum is ");
+
+  Serial.print(red);
+
+  Jpega=Optical(otnoshenie);
+
+  Serial.println("The optical  ");
+
+  Serial.println(Jpega);
+
+  if(Jpega>0.1&&otnoshenie>1.2){
+
+   snapshot(red);
+
+  }
+
+  else if(Jpega<0.1&&otnoshenie>1.2){
+
+    Serial.println();
+
+    Serial.print("There probably isn't a fire ");
+
+  }
+
+  else if(otnoshenie<1.2&&Jpega>0.3){
+
+    snapshot(red);
+
+  }
+
+  else if(otnoshenie<1.2&&Jpega<0.3&&otnoshenie>1.1){
+
+     Serial.println();
+
+    Serial.print("There probably isn't a fire ");
+
+  }
+
+  else {
+
+     Serial.println();
+
+    Serial.print("No signs of fire ");
+
+  }
+
+ delay(5000);
+
+}
